@@ -1,0 +1,56 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set CI version
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          path = Path("pyproject.toml")
+          text = path.read_text(encoding="utf-8")
+          version = f"0.1.{os.environ['GITHUB_RUN_NUMBER']}"
+          # Prefix with the UTC date to make every push publish a unique version.
+          from datetime import datetime, timezone
+          version = f"0.1.{datetime.now(timezone.utc):%Y%m%d}.{os.environ['GITHUB_RUN_NUMBER']}"
+          text = re.sub(r'^version = ".*"$', f'version = "{version}"', text, count=1, flags=re.MULTILINE)
+          path.write_text(text, encoding="utf-8")
+          print(version)
+          PY
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run tests
+        run: uv run python -m unittest discover -s test -v
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

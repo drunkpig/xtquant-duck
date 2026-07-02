@@ -1,0 +1,55 @@
+[project]
+name = "xtquant-duck"
+version = "0.1.0"
+description = "DuckDB-backed local mock implementation of selected xtquant APIs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "drunkpig" }
+]
+keywords = ["xtquant", "qmt", "duckdb", "quant", "mock"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "duckdb>=1.0",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "pyarrow>=14.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/drunkpig/xtquant-duck"
+Repository = "https://github.com/drunkpig/xtquant-duck"
+Issues = "https://github.com/drunkpig/xtquant-duck/issues"
+
+[dependency-groups]
+dev = [
+  "build>=1.2",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["qmt_data_layer", "xtquant"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "qmt_data_layer",
+  "xtquant",
+  "scripts",
+  "docs",
+  "test",
+  "README.md",
+  "LICENSE",
+  "pyproject.toml",
+]
