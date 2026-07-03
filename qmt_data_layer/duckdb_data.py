@@ -187,6 +187,13 @@ class DuckDbMarketData:
         period_norm = str(period).lower()
         start = parse_qmt_time(start_time) if start_time else pd.Timestamp("1900-01-01")
         end = parse_qmt_time(end_time) if end_time else pd.Timestamp("2100-01-01")
+        if len(codes) > 1 and period_norm in {"1m", "1min"}:
+            if dividend_type in {"back_ratio", "back"}:
+                raise NotImplementedError("mock intraday back_ratio is not implemented; use raw or front_ratio")
+            raw = self._bar_from_ticks_many(codes, start, end, period="1m")
+            if dividend_type not in {None, "", "none"}:
+                raw = self._apply_intraday_dividend_many(raw, dividend_type)
+            return self._split_market_data(codes, raw, field_list, count, period)
         out: dict[str, pd.DataFrame] = {}
         for code in codes:
             if period_norm == "tick":
@@ -202,13 +209,7 @@ class DuckDbMarketData:
             else:
                 raise NotImplementedError(f"mock period is not implemented: {period!r}")
             if field_list:
-                missing = [c for c in field_list if c not in df.columns]
-                if missing:
-                    raise NotImplementedError(f"mock fields are not implemented for period {period!r}: {missing}")
-                keep = [c for c in field_list if c in df.columns]
-                if "time" in df.columns and "time" not in keep:
-                    keep = ["time"] + keep
-                df = df[keep].copy() if keep else pd.DataFrame(index=df.index)
+                df = self._filter_fields(df, field_list, period)
             if count and count > 0 and len(df) > count:
                 df = df.tail(count).reset_index(drop=True)
             out[code] = df
@@ -302,8 +303,7 @@ class DuckDbMarketData:
         ).fetchdf()
         if df.empty:
             return _empty_tick()
-        rows = [self._tick_record_to_qmt(r) for _, r in df.iterrows()]
-        return pd.DataFrame(rows)
+        return self._tick_frame_to_qmt(df)
 
     def minute(self, code: str, start: pd.Timestamp, end: pd.Timestamp, dividend_type: str | None = None) -> pd.DataFrame:
         code = normalize_qmt_code(code)
@@ -542,6 +542,128 @@ class DuckDbMarketData:
         df["preClose"] = np.nan
         return df
 
+    def _bar_from_ticks_many(self, codes: list[str], start: pd.Timestamp, end: pd.Timestamp, period: str) -> pd.DataFrame:
+        codes = [normalize_qmt_code(c) for c in codes]
+        if not codes:
+            return pd.DataFrame(columns=["code", *_empty_bar().columns])
+        source_end = end
+        if end.hour == 15 and end.minute == 0 and end.second == 0:
+            source_end = end + pd.Timedelta(seconds=59)
+        if period == "1m":
+            label_expr = """
+                case
+                    when date_part('hour', ts) = 9 and date_part('minute', ts) = 25 then date_trunc('day', ts) + interval 9 hour + interval 30 minute
+                    when date_part('hour', ts) = 15 and date_part('minute', ts) = 0 then date_trunc('day', ts) + interval 15 hour
+                    when (date_part('hour', ts) = 9 and date_part('minute', ts) >= 30) or date_part('hour', ts) = 10 or (date_part('hour', ts) = 11 and date_part('minute', ts) < 30)
+                        then date_trunc('minute', ts) + interval 1 minute
+                    when date_part('hour', ts) = 13 or (date_part('hour', ts) = 14 and date_part('minute', ts) < 58)
+                        then date_trunc('minute', ts) + interval 1 minute
+                    else null
+                end
+            """
+        elif period == "60m":
+            label_expr = """
+                case
+                    when ts::time >= time '09:30:00' and ts::time < time '10:30:00'
+                        then date_trunc('day', ts) + interval 10 hour + interval 30 minute
+                    when ts::time >= time '10:30:00' and ts::time < time '11:30:00'
+                        then date_trunc('day', ts) + interval 11 hour + interval 30 minute
+                    when ts::time >= time '13:00:00' and ts::time < time '14:00:00'
+                        then date_trunc('day', ts) + interval 14 hour
+                    when ts::time >= time '14:00:00' and ts::time <= time '15:00:59'
+                        then date_trunc('day', ts) + interval 15 hour
+                    else null
+                end
+            """
+        else:
+            raise ValueError(period)
+        df = self.con.execute(
+            f"""
+            with labeled as (
+                select
+                    code,
+                    {label_expr} as bar_ts,
+                    ts,
+                    source_row,
+                    last_price,
+                    volume_lots,
+                    amount_delta
+                from raw_tick_v3
+                where code in {_quote_list(codes)}
+                  and ts >= ?
+                  and ts <= ?
+                  and last_price > 0
+            ),
+            filtered as (
+                select *
+                from labeled
+                where bar_ts is not null
+                  and bar_ts >= ?
+                  and bar_ts <= ?
+            )
+            select
+                code,
+                bar_ts as ts,
+                cast(strftime(bar_ts, '%Y%m%d%H%M%S') as bigint) as time,
+                first(last_price order by ts, source_row) as open,
+                max(last_price) as high,
+                min(last_price) as low,
+                last(last_price order by ts, source_row) as close,
+                sum(volume_lots) as volume,
+                sum(amount_delta) as amount
+            from filtered
+            group by code, bar_ts
+            having sum(volume_lots) > 0
+            order by code, bar_ts
+            """,
+            [start.to_pydatetime(), source_end.to_pydatetime(), start.to_pydatetime(), end.to_pydatetime()],
+        ).fetchdf()
+        if df.empty:
+            return pd.DataFrame(columns=["code", *_empty_bar().columns])
+        df["time"] = df["ts"].map(qmt_millis)
+        df["preClose"] = np.nan
+        return df
+
+    def _apply_intraday_dividend_many(self, df: pd.DataFrame, dividend_type: str | None) -> pd.DataFrame:
+        if dividend_type in {None, "", "none"}:
+            return df
+        if dividend_type in {"back_ratio", "back"}:
+            raise NotImplementedError("mock intraday back_ratio is not implemented; use raw or front_ratio")
+        if dividend_type not in {"front_ratio", "front"}:
+            raise ValueError(f"Unsupported mock intraday dividend_type: {dividend_type!r}")
+        if df.empty:
+            return pd.DataFrame(columns=["code", *_empty_adjusted_bar().columns])
+        parts: list[pd.DataFrame] = []
+        for code, sub in df.groupby("code", sort=False):
+            adjusted = self._apply_intraday_dividend(str(code), sub.drop(columns=["code"]), dividend_type)
+            adjusted.insert(0, "code", str(code))
+            parts.append(adjusted)
+        return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=["code", *_empty_adjusted_bar().columns])
+
+    def _split_market_data(self, codes: list[str], df: pd.DataFrame, field_list: list[str] | None, count: int, period: str) -> dict[str, pd.DataFrame]:
+        out: dict[str, pd.DataFrame] = {}
+        for code in codes:
+            if df.empty or "code" not in df.columns:
+                sub = _empty_bar()
+            else:
+                sub = df[df["code"].eq(code)].drop(columns=["code"], errors="ignore").reset_index(drop=True)
+            if field_list:
+                sub = self._filter_fields(sub, field_list, period)
+            if count and count > 0 and len(sub) > count:
+                sub = sub.tail(count).reset_index(drop=True)
+            out[code] = sub
+        return out
+
+    @staticmethod
+    def _filter_fields(df: pd.DataFrame, field_list: list[str], period: str) -> pd.DataFrame:
+        missing = [c for c in field_list if c not in df.columns]
+        if missing:
+            raise NotImplementedError(f"mock fields are not implemented for period {period!r}: {missing}")
+        keep = [c for c in field_list if c in df.columns]
+        if "time" in df.columns and "time" not in keep:
+            keep = ["time"] + keep
+        return df[keep].copy() if keep else pd.DataFrame(index=df.index)
+
     def _apply_intraday_dividend(self, code: str, df: pd.DataFrame, dividend_type: str | None) -> pd.DataFrame:
         if dividend_type in {None, "", "none"}:
             return df
@@ -606,3 +728,28 @@ class DuckDbMarketData:
             "askVol": self._array5(r, "ask_vol"),
             "bidVol": self._array5(r, "bid_vol"),
         }
+
+    @staticmethod
+    def _level_arrays(df: pd.DataFrame, prefix: str) -> list[list[float]]:
+        cols = [f"{prefix}{i}" for i in range(1, 6)]
+        existing = [c for c in cols if c in df.columns]
+        if len(existing) == len(cols):
+            return df[cols].astype(float).to_numpy().tolist()
+        return [[float(row.get(c, np.nan)) for c in cols] for _, row in df.iterrows()]
+
+    def _tick_frame_to_qmt(self, df: pd.DataFrame) -> pd.DataFrame:
+        out = pd.DataFrame(
+            {
+                "ts": pd.to_datetime(df["ts"]),
+                "lastPrice": pd.to_numeric(df["last_price"], errors="coerce"),
+                "volume": pd.to_numeric(df["cum_volume"] if "cum_volume" in df.columns else df["volume_lots"], errors="coerce"),
+                "amount": pd.to_numeric(df["cum_amount"] if "cum_amount" in df.columns else df["amount_delta"], errors="coerce"),
+                "open": pd.to_numeric(df["open_price"] if "open_price" in df.columns else df["last_price"], errors="coerce"),
+            }
+        )
+        out["time"] = out["ts"].map(qmt_millis)
+        out["askPrice"] = self._level_arrays(df, "ask_price")
+        out["bidPrice"] = self._level_arrays(df, "bid_price")
+        out["askVol"] = self._level_arrays(df, "ask_vol")
+        out["bidVol"] = self._level_arrays(df, "bid_vol")
+        return out[["time", "ts", "lastPrice", "volume", "amount", "open", "askPrice", "bidPrice", "askVol", "bidVol"]]

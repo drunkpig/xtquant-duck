@@ -82,42 +82,50 @@ def build_test_db(path: Path) -> None:
             """
         )
         tick_rows = [
-            ("2022-07-20 09:25:00", "2022-07-20", 10.0, 1, 1000.0, 1),
-            ("2022-07-20 09:30:10", "2022-07-20", 10.2, 2, 2040.0, 2),
-            ("2022-07-20 09:30:50", "2022-07-20", 10.4, 3, 3120.0, 3),
-            ("2022-07-20 10:30:00", "2022-07-20", 10.8, 4, 4320.0, 4),
-            ("2022-07-21 09:25:00", "2022-07-21", 20.0, 5, 10000.0, 5),
-            ("2022-07-21 09:30:10", "2022-07-21", 20.2, 6, 12120.0, 6),
-            ("2022-07-21 09:30:50", "2022-07-21", 20.4, 7, 14280.0, 7),
-            ("2022-07-21 10:30:00", "2022-07-21", 20.8, 8, 16640.0, 8),
+            ("600000.SH", "sh600000", "2022-07-20 09:25:00", "2022-07-20", 10.0, 1, 1000.0, 1),
+            ("600000.SH", "sh600000", "2022-07-20 09:30:10", "2022-07-20", 10.2, 2, 2040.0, 2),
+            ("600000.SH", "sh600000", "2022-07-20 09:30:50", "2022-07-20", 10.4, 3, 3120.0, 3),
+            ("600000.SH", "sh600000", "2022-07-20 10:30:00", "2022-07-20", 10.8, 4, 4320.0, 4),
+            ("600000.SH", "sh600000", "2022-07-21 09:25:00", "2022-07-21", 20.0, 5, 10000.0, 5),
+            ("600000.SH", "sh600000", "2022-07-21 09:30:10", "2022-07-21", 20.2, 6, 12120.0, 6),
+            ("600000.SH", "sh600000", "2022-07-21 09:30:50", "2022-07-21", 20.4, 7, 14280.0, 7),
+            ("600000.SH", "sh600000", "2022-07-21 10:30:00", "2022-07-21", 20.8, 8, 16640.0, 8),
+            ("000001.SZ", "sz000001", "2022-07-20 09:25:00", "2022-07-20", 30.0, 1, 3000.0, 1),
+            ("000001.SZ", "sz000001", "2022-07-20 09:30:10", "2022-07-20", 30.2, 2, 6040.0, 2),
+            ("000001.SZ", "sz000001", "2022-07-20 09:30:50", "2022-07-20", 30.4, 3, 9120.0, 3),
         ]
-        for ts, trade_date, price, volume, amount, source_row in tick_rows:
+        for code, local_code, ts, trade_date, price, volume, amount, source_row in tick_rows:
             con.execute(
                 """
                 insert into raw_tick_v3 values (
-                    ?, ?, '600000.SH', 'sh600000', 'SH', ?, 1, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, 1, ?, ?, ?,
                     '', 9.9, 9.8, 9.7, 9.6, 9.5, 10.1, 10.2, 10.3, 10.4, 10.5,
                     100, 90, 80, 70, 60, 110, 120, 130, 140, 150, 'unit', ?
                 )
                 """,
-                [ts, trade_date, price, amount, volume, volume * 100, source_row],
+                [ts, trade_date, code, local_code, code.split(".")[1], price, amount, volume, volume * 100, source_row],
             )
         daily_rows = [
-            ("2022-07-20", 10.0, 11.0, 9.0, 10.5, 1000.0, 10500.0),
-            ("2022-07-21", 20.0, 21.0, 19.0, 20.5, 2000.0, 41000.0),
+            ("600000.SH", "sh600000", "2022-07-20", 10.0, 11.0, 9.0, 10.5, 1000.0, 10500.0),
+            ("600000.SH", "sh600000", "2022-07-21", 20.0, 21.0, 19.0, 20.5, 2000.0, 41000.0),
+            ("000001.SZ", "sz000001", "2022-07-20", 30.0, 31.0, 29.0, 30.5, 3000.0, 91500.0),
         ]
-        for date, open_, high, low, close, volume_lots, amount in daily_rows:
+        for code, local_code, date, open_, high, low, close, volume_lots, amount in daily_rows:
             con.execute(
                 """
                 insert into raw_daily_v1 values (
-                    ?, '600000.SH', 'sh600000', ?, ?, ?, ?, ?, ?, ?, ?, 240, 'unit'
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 240, 'unit'
                 )
                 """,
-                [date, open_, high, low, close, volume_lots, volume_lots, volume_lots * 100, amount],
+                [date, code, local_code, open_, high, low, close, volume_lots, volume_lots, volume_lots * 100, amount],
             )
         con.executemany(
-            "insert into baostock_adjust_factor_events values ('600000.SH', ?, ?, ?)",
-            [("1900-01-01", 0.5, 2.0), ("2022-07-21", 1.0, 4.0)],
+            "insert into baostock_adjust_factor_events values (?, ?, ?, ?)",
+            [
+                ("600000.SH", "1900-01-01", 0.5, 2.0),
+                ("600000.SH", "2022-07-21", 1.0, 4.0),
+                ("000001.SZ", "1900-01-01", 1.0, 1.0),
+            ],
         )
     finally:
         con.close()
@@ -206,6 +214,27 @@ class DuckDbMarketDataTests(unittest.TestCase):
 
         self.assertEqual(len(out), 1)
         self.assertEqual(list(out.columns), ["time", "close"])
+
+    def test_get_market_data_ex_batches_multiple_codes_for_minute(self) -> None:
+        single = self.data.get_market_data_ex(
+            [],
+            ["600000.SH"],
+            "1m",
+            "20220720091500",
+            "20220720093100",
+        )["600000.SH"]
+        batched = self.data.get_market_data_ex(
+            [],
+            ["600000.SH", "000001.SZ"],
+            "1m",
+            "20220720091500",
+            "20220720093100",
+        )
+
+        self.assertEqual(len(batched["600000.SH"]), len(single))
+        self.assertEqual(batched["600000.SH"]["close"].tolist(), single["close"].tolist())
+        self.assertGreater(len(batched["000001.SZ"]), 0)
+        self.assertAlmostEqual(batched["000001.SZ"].iloc[-1]["close"], 30.4)
 
     def test_unsupported_semantics_raise_not_implemented(self) -> None:
         with self.assertRaises(NotImplementedError):
