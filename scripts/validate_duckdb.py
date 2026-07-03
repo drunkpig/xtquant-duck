@@ -222,8 +222,8 @@ def validate_60m(con: duckdb.DuckDBPyConnection, data: DuckDbMarketData, codes: 
 def validate_mock_smoke() -> pd.DataFrame:
     sys.path.insert(0, str(ROOT))
     try:
-        from xtquant import xtdata
-        from xtquant.xttrader import XtQuantTrader
+        from xtquant_duck import xtdata
+        from xtquant_duck.xttrader import XtQuantTrader
 
         daily = xtdata.get_market_data_ex(["time", "open", "close", "volume"], ["600000.SH"], "1d", "20220101", "20220110")
         minute = xtdata.get_market_data_ex(["time", "open", "close", "volume"], ["600000.SH"], "1m", "20220104091500", "20220104100000")

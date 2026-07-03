@@ -22,7 +22,7 @@ class MockXtQuantApiTests(unittest.TestCase):
         self.old_db = os.environ.get("QMT_MOCK_DUCKDB")
         os.environ["QMT_MOCK_DUCKDB"] = str(self.db_path)
 
-        self.xtdata = importlib.import_module("xtquant.xtdata")
+        self.xtdata = importlib.import_module("xtquant_duck.xtdata")
         self.xtdata.close()
 
     def tearDown(self) -> None:
@@ -101,7 +101,7 @@ class MockXtQuantApiTests(unittest.TestCase):
             self.xtdata.run()
 
     def test_unimplemented_xttrader_apis_raise(self) -> None:
-        xttrader = importlib.import_module("xtquant.xttrader")
+        xttrader = importlib.import_module("xtquant_duck.xttrader")
         trader = xttrader.XtQuantTrader("userdata", 1)
 
         with self.assertRaises(NotImplementedError):

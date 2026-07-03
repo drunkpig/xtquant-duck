@@ -2,10 +2,10 @@
 
 DuckDB-backed local mock implementation of selected `xtquant` APIs.
 
-The goal is to let research code switch between real QMT `xtquant.xtdata` and a
-local DuckDB-backed mock without changing strategy logic. QMT semantics are the
-canonical reference; unsupported mock behavior raises `NotImplementedError`
-instead of silently returning placeholder data.
+The goal is to let research code switch between real QMT `xtquant` and a local
+DuckDB-backed mock by changing only the import. QMT semantics are the canonical
+reference; unsupported mock behavior raises `NotImplementedError` instead of
+silently returning placeholder data.
 
 ## Install
 
@@ -29,10 +29,12 @@ Set the DuckDB database path:
 $env:QMT_MOCK_DUCKDB = "C:\data-tick\duckdb\qmt_mock.duckdb"
 ```
 
-Use the mock `xtquant` package directly:
+Use the mock package as an `xtquant`-compatible module:
 
 ```python
-from xtquant import xtdata
+import xtquant_duck as xtquant
+
+xtdata = xtquant.xtdata
 
 data = xtdata.get_market_data_ex(
     field_list=["time", "open", "high", "low", "close", "volume"],
@@ -40,15 +42,13 @@ data = xtdata.get_market_data_ex(
     period="1d",
     start_time="20220101",
     end_time="20251231",
-    dividend_type="back_ratio",
+    dividend_type="front_ratio",
 )
 ```
 
-Lower-level DuckDB access is available through:
-
-```python
-from qmt_data_layer import DuckDbMarketData
-```
+The packaged `qmt_data_layer` module is kept for database build and validation
+tools. Strategy code should use the `xtquant_duck` API above so switching back
+to real miniQMT only changes the import.
 
 Default database path is `C:\data-tick\duckdb\qmt_mock.duckdb`; override it with
 `QMT_MOCK_DUCKDB`.

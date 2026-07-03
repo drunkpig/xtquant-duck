@@ -1,10 +1,14 @@
-# Mock xtquant API
+# xtquant_duck API
 
 This document describes the DuckDB-backed mock package installed as:
 
-`xtquant`
+`xtquant_duck`
 
-Install `xtquant-duck` or place `C:\workspace\xtquant-duck` before the real QMT package on `PYTHONPATH`.
+Install `xtquant-duck` and import it as an `xtquant`-compatible module:
+
+```python
+import xtquant_duck as xtquant
+```
 
 The mock is intentionally strict. Unsupported semantics raise `NotImplementedError`; missing local data raises `FileNotFoundError`. It must not silently return placeholder market data.
 
@@ -32,7 +36,7 @@ Time parameters accept the formats handled by `parse_qmt_time()`:
 
 Returned `time` values use QMT-style local-time milliseconds since Unix epoch.
 
-## `xtquant.xtdata`
+## `xtquant_duck.xtdata`
 
 ### `download_history_data(stock_code, period, start_time="", end_time="", incrementally=False, **kwargs) -> bool`
 
@@ -253,7 +257,7 @@ These APIs are declared only so imports resolve, but push subscriptions are not 
 
 All raise `NotImplementedError`.
 
-## `xtquant.xttrader`
+## `xtquant_duck.xttrader`
 
 The mock package provides import-compatible stubs:
 
@@ -274,7 +278,7 @@ The following trading/account methods are not implemented and raise `NotImplemen
 
 This prevents mock backtests from accidentally treating placeholder account data as real trading state.
 
-## `xtquant.xttype`
+## `xtquant_duck.xttype`
 
 ### `StockAccount(account_id: str, account_type: str = "STOCK")`
 
@@ -283,7 +287,7 @@ Simple data holder with attributes:
 - `account_id`
 - `account_type`
 
-## `xtquant.xtconstant`
+## `xtquant_duck.xtconstant`
 
 Defined constants:
 

@@ -40,12 +40,12 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["qmt_data_layer", "xtquant"]
+packages = ["qmt_data_layer", "xtquant_duck"]
 
 [tool.hatch.build.targets.sdist]
 include = [
   "qmt_data_layer",
-  "xtquant",
+  "xtquant_duck",
   "scripts",
   "docs",
   "test",
