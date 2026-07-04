@@ -15,38 +15,35 @@ def build_test_db(path: Path) -> None:
     try:
         con.execute(
             """
-            create table raw_tick_v3 (
+            create table qmt_tick_v1 (
                 ts timestamp,
                 trade_date date,
                 code varchar,
                 local_code varchar,
                 exchange varchar,
-                last_price double,
-                trade_count bigint,
-                amount_delta double,
-                volume_lots double,
-                volume_shares double,
-                side varchar,
-                bid_price1 double,
-                bid_price2 double,
-                bid_price3 double,
-                bid_price4 double,
-                bid_price5 double,
-                ask_price1 double,
-                ask_price2 double,
-                ask_price3 double,
-                ask_price4 double,
-                ask_price5 double,
-                bid_vol1 double,
-                bid_vol2 double,
-                bid_vol3 double,
-                bid_vol4 double,
-                bid_vol5 double,
-                ask_vol1 double,
-                ask_vol2 double,
-                ask_vol3 double,
-                ask_vol4 double,
-                ask_vol5 double,
+                lastPrice double,
+                volume double,
+                amount double,
+                bidPrice1 double,
+                bidPrice2 double,
+                bidPrice3 double,
+                bidPrice4 double,
+                bidPrice5 double,
+                askPrice1 double,
+                askPrice2 double,
+                askPrice3 double,
+                askPrice4 double,
+                askPrice5 double,
+                bidVol1 double,
+                bidVol2 double,
+                bidVol3 double,
+                bidVol4 double,
+                bidVol5 double,
+                askVol1 double,
+                askVol2 double,
+                askVol3 double,
+                askVol4 double,
+                askVol5 double,
                 source_file varchar,
                 source_row bigint
             )
@@ -54,7 +51,7 @@ def build_test_db(path: Path) -> None:
         )
         con.execute(
             """
-            create table raw_daily_v1 (
+            create table qmt_daily_v1 (
                 date date,
                 code varchar,
                 local_code varchar,
@@ -63,10 +60,7 @@ def build_test_db(path: Path) -> None:
                 low double,
                 close double,
                 volume double,
-                volume_lots double,
-                volume_shares double,
                 amount double,
-                minute_count integer,
                 source_file varchar
             )
             """
@@ -83,41 +77,41 @@ def build_test_db(path: Path) -> None:
         )
         tick_rows = [
             ("600000.SH", "sh600000", "2022-07-20 09:25:00", "2022-07-20", 10.0, 1, 1000.0, 1),
-            ("600000.SH", "sh600000", "2022-07-20 09:30:10", "2022-07-20", 10.2, 2, 2040.0, 2),
-            ("600000.SH", "sh600000", "2022-07-20 09:30:50", "2022-07-20", 10.4, 3, 3120.0, 3),
-            ("600000.SH", "sh600000", "2022-07-20 10:30:00", "2022-07-20", 10.8, 4, 4320.0, 4),
+            ("600000.SH", "sh600000", "2022-07-20 09:30:10", "2022-07-20", 10.2, 3, 3040.0, 2),
+            ("600000.SH", "sh600000", "2022-07-20 09:30:50", "2022-07-20", 10.4, 6, 6160.0, 3),
+            ("600000.SH", "sh600000", "2022-07-20 10:30:00", "2022-07-20", 10.8, 10, 10480.0, 4),
             ("600000.SH", "sh600000", "2022-07-21 09:25:00", "2022-07-21", 20.0, 5, 10000.0, 5),
-            ("600000.SH", "sh600000", "2022-07-21 09:30:10", "2022-07-21", 20.2, 6, 12120.0, 6),
-            ("600000.SH", "sh600000", "2022-07-21 09:30:50", "2022-07-21", 20.4, 7, 14280.0, 7),
-            ("600000.SH", "sh600000", "2022-07-21 10:30:00", "2022-07-21", 20.8, 8, 16640.0, 8),
+            ("600000.SH", "sh600000", "2022-07-21 09:30:10", "2022-07-21", 20.2, 11, 22120.0, 6),
+            ("600000.SH", "sh600000", "2022-07-21 09:30:50", "2022-07-21", 20.4, 18, 36400.0, 7),
+            ("600000.SH", "sh600000", "2022-07-21 10:30:00", "2022-07-21", 20.8, 26, 53040.0, 8),
             ("000001.SZ", "sz000001", "2022-07-20 09:25:00", "2022-07-20", 30.0, 1, 3000.0, 1),
-            ("000001.SZ", "sz000001", "2022-07-20 09:30:10", "2022-07-20", 30.2, 2, 6040.0, 2),
-            ("000001.SZ", "sz000001", "2022-07-20 09:30:50", "2022-07-20", 30.4, 3, 9120.0, 3),
+            ("000001.SZ", "sz000001", "2022-07-20 09:30:10", "2022-07-20", 30.2, 3, 9040.0, 2),
+            ("000001.SZ", "sz000001", "2022-07-20 09:30:50", "2022-07-20", 30.4, 6, 18160.0, 3),
         ]
         for code, local_code, ts, trade_date, price, volume, amount, source_row in tick_rows:
             con.execute(
                 """
-                insert into raw_tick_v3 values (
-                    ?, ?, ?, ?, ?, ?, 1, ?, ?, ?,
-                    '', 9.9, 9.8, 9.7, 9.6, 9.5, 10.1, 10.2, 10.3, 10.4, 10.5,
+                insert into qmt_tick_v1 values (
+                    ?, ?, ?, ?, ?, ?, ?, ?,
+                    9.9, 9.8, 9.7, 9.6, 9.5, 10.1, 10.2, 10.3, 10.4, 10.5,
                     100, 90, 80, 70, 60, 110, 120, 130, 140, 150, 'unit', ?
                 )
                 """,
-                [ts, trade_date, code, local_code, code.split(".")[1], price, amount, volume, volume * 100, source_row],
+                [ts, trade_date, code, local_code, code.split(".")[1], price, volume, amount, source_row],
             )
         daily_rows = [
             ("600000.SH", "sh600000", "2022-07-20", 10.0, 11.0, 9.0, 10.5, 1000.0, 10500.0),
             ("600000.SH", "sh600000", "2022-07-21", 20.0, 21.0, 19.0, 20.5, 2000.0, 41000.0),
             ("000001.SZ", "sz000001", "2022-07-20", 30.0, 31.0, 29.0, 30.5, 3000.0, 91500.0),
         ]
-        for code, local_code, date, open_, high, low, close, volume_lots, amount in daily_rows:
+        for code, local_code, date, open_, high, low, close, volume, amount in daily_rows:
             con.execute(
                 """
-                insert into raw_daily_v1 values (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 240, 'unit'
+                insert into qmt_daily_v1 values (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unit'
                 )
                 """,
-                [date, code, local_code, open_, high, low, close, volume_lots, volume_lots, volume_lots * 100, amount],
+                [date, code, local_code, open_, high, low, close, volume, amount],
             )
         con.executemany(
             "insert into baostock_adjust_factor_events values (?, ?, ?, ?)",

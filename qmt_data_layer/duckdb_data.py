@@ -142,11 +142,11 @@ class DuckDbMarketData:
             count = self.con.execute(
                 """
                 select count(*)
-                from raw_tick_v3
+                from qmt_tick_v1
                 where code = ?
                   and ts >= ?
                   and ts <= ?
-                  and last_price > 0
+                  and lastPrice > 0
                 limit 1
                 """,
                 [code, start.to_pydatetime(), source_end.to_pydatetime()],
@@ -156,7 +156,7 @@ class DuckDbMarketData:
             count = self.con.execute(
                 """
                 select count(*)
-                from raw_daily_v1
+                from qmt_daily_v1
                 where code = ?
                   and date >= date_trunc('day', ?)::date
                   and date <= date_trunc('day', ?)::date
@@ -225,38 +225,29 @@ class DuckDbMarketData:
                     select date_trunc('day', ?)::timestamp as day_start
                 ),
                 day_open as (
-                    select last_price as open_price
-                    from raw_tick_v3, d
+                    select lastPrice as open_price
+                    from qmt_tick_v1, d
                     where code = ?
                       and ts >= day_start
                       and ts <= ?
-                      and last_price > 0
+                      and lastPrice > 0
                     order by ts, source_row
                     limit 1
                 ),
                 latest as (
                     select *
-                    from raw_tick_v3, d
+                    from qmt_tick_v1, d
                     where code = ?
                       and ts >= day_start
                       and ts <= ?
-                      and last_price > 0
+                      and lastPrice > 0
                     order by ts desc, source_row desc
                     limit 1
-                ),
-                cum as (
-                    select
-                        sum(volume_lots) as cum_volume,
-                        sum(amount_delta) as cum_amount
-                    from raw_tick_v3, d
-                    where code = ?
-                      and ts >= day_start
-                      and ts <= ?
                 )
-                select latest.*, day_open.open_price, cum.cum_volume, cum.cum_amount
-                from latest, day_open, cum
+                select latest.*, day_open.open_price
+                from latest, day_open
                 """,
-                [clock.to_pydatetime(), code, clock.to_pydatetime(), code, clock.to_pydatetime(), code, clock.to_pydatetime()],
+                [clock.to_pydatetime(), code, clock.to_pydatetime(), code, clock.to_pydatetime()],
             ).fetchdf()
             if row.empty:
                 continue
@@ -270,36 +261,32 @@ class DuckDbMarketData:
             """
             with ticks as (
                 select *
-                from raw_tick_v3
+                from qmt_tick_v1
                 where code = ?
                   and ts >= ?
                   and ts <= ?
-                  and last_price > 0
+                  and lastPrice > 0
                 order by ts, source_row
+            ),
+            day_open as (
+                select trade_date, first(lastPrice order by ts, source_row) as open_price
+                from qmt_tick_v1
+                where code = ?
+                  and trade_date >= date_trunc('day', ?)::date
+                  and trade_date <= date_trunc('day', ?)::date
+                  and lastPrice > 0
+                group by trade_date
             ),
             enriched as (
                 select
-                    *,
-                    first_value(last_price) over (
-                        partition by code, trade_date
-                        order by ts, source_row
-                        rows between unbounded preceding and unbounded following
-                    ) as open_price,
-                    sum(volume_lots) over (
-                        partition by code, trade_date
-                        order by ts, source_row
-                        rows between unbounded preceding and current row
-                    ) as cum_volume,
-                    sum(amount_delta) over (
-                        partition by code, trade_date
-                        order by ts, source_row
-                        rows between unbounded preceding and current row
-                    ) as cum_amount
+                    ticks.*,
+                    day_open.open_price
                 from ticks
+                left join day_open using (trade_date)
             )
             select * from enriched
             """,
-            [code, start.to_pydatetime(), end.to_pydatetime()],
+            [code, start.to_pydatetime(), end.to_pydatetime(), code, start.to_pydatetime(), end.to_pydatetime()],
         ).fetchdf()
         if df.empty:
             return _empty_tick()
@@ -327,10 +314,10 @@ class DuckDbMarketData:
                     high,
                     low,
                     close,
-                    volume_lots as volume,
+                    volume,
                     amount,
                     lag(close) over (order by date) as preClose
-                from raw_daily_v1
+                from qmt_daily_v1
                 where code = ?
                   and date <= date_trunc('day', ?)::date
                 order by date
@@ -358,7 +345,7 @@ class DuckDbMarketData:
             """
             with daily as (
                 select *
-                from raw_daily_v1
+                from qmt_daily_v1
                 where code = ?
                   and date >= date_trunc('day', ?)::date
                   and date <= date_trunc('day', ?)::date
@@ -372,7 +359,7 @@ class DuckDbMarketData:
                     d.high * coalesce(f.backAdjustFactor, 1.0) as high,
                     d.low * coalesce(f.backAdjustFactor, 1.0) as low,
                     d.close * coalesce(f.backAdjustFactor, 1.0) as close,
-                    d.volume_lots as volume,
+                    d.volume,
                     d.amount,
                     d.open as raw_open,
                     d.high as raw_high,
@@ -402,7 +389,7 @@ class DuckDbMarketData:
             """
             with daily as (
                 select *
-                from raw_daily_v1
+                from qmt_daily_v1
                 where code = ?
                   and date >= date_trunc('day', ?)::date
                   and date <= date_trunc('day', ?)::date
@@ -430,7 +417,7 @@ class DuckDbMarketData:
                     d.high * coalesce(d.foreAdjustFactor, 1.0) / coalesce(anchor.anchor_factor, 1.0) as high,
                     d.low * coalesce(d.foreAdjustFactor, 1.0) / coalesce(anchor.anchor_factor, 1.0) as low,
                     d.close * coalesce(d.foreAdjustFactor, 1.0) / coalesce(anchor.anchor_factor, 1.0) as close,
-                    d.volume_lots as volume,
+                    d.volume,
                     d.amount,
                     d.open as raw_open,
                     d.high as raw_high,
@@ -473,10 +460,10 @@ class DuckDbMarketData:
             label_expr = """
                 case
                     when date_part('hour', ts) = 9 and date_part('minute', ts) = 25 then date_trunc('day', ts) + interval 9 hour + interval 30 minute
-                    when date_part('hour', ts) = 15 and date_part('minute', ts) = 0 then date_trunc('day', ts) + interval 15 hour
-                    when (date_part('hour', ts) = 9 and date_part('minute', ts) >= 30) or date_part('hour', ts) = 10 or (date_part('hour', ts) = 11 and date_part('minute', ts) < 30)
+                    when ts::time > time '14:57:00' and ts::time <= time '15:00:59' then date_trunc('day', ts) + interval 15 hour
+                    when (date_part('hour', ts) = 9 and date_part('minute', ts) >= 30) or date_part('hour', ts) = 10 or date_part('hour', ts) = 11
                         then date_trunc('minute', ts) + interval 1 minute
-                    when date_part('hour', ts) = 13 or (date_part('hour', ts) = 14 and date_part('minute', ts) < 58)
+                    when date_part('hour', ts) = 13 or (date_part('hour', ts) = 14 and date_part('minute', ts) < 57)
                         then date_trunc('minute', ts) + interval 1 minute
                     else null
                 end
@@ -503,19 +490,27 @@ class DuckDbMarketData:
                 select
                     {label_expr} as bar_ts,
                     ts,
+                    trade_date,
                     source_row,
-                    last_price,
-                    volume_lots,
-                    amount_delta
-                from raw_tick_v3
+                    lastPrice,
+                    volume,
+                    amount
+                from qmt_tick_v1
                 where code = ?
                   and ts >= ?
                   and ts <= ?
-                  and last_price > 0
+                  and lastPrice > 0
+            ),
+            with_delta as (
+                select
+                    *,
+                    greatest(volume - coalesce(lag(volume) over (partition by trade_date order by ts, source_row), 0), 0) as delta_volume,
+                    greatest(amount - coalesce(lag(amount) over (partition by trade_date order by ts, source_row), 0), 0) as delta_amount
+                from labeled
             ),
             filtered as (
                 select *
-                from labeled
+                from with_delta
                 where bar_ts is not null
                   and bar_ts >= ?
                   and bar_ts <= ?
@@ -523,15 +518,15 @@ class DuckDbMarketData:
             select
                 bar_ts as ts,
                 cast(strftime(bar_ts, '%Y%m%d%H%M%S') as bigint) as time,
-                first(last_price order by ts, source_row) as open,
-                max(last_price) as high,
-                min(last_price) as low,
-                last(last_price order by ts, source_row) as close,
-                sum(volume_lots) as volume,
-                sum(amount_delta) as amount
+                first(lastPrice order by ts, source_row) as open,
+                max(lastPrice) as high,
+                min(lastPrice) as low,
+                last(lastPrice order by ts, source_row) as close,
+                sum(delta_volume) as volume,
+                sum(delta_amount) as amount
             from filtered
             group by bar_ts
-            having sum(volume_lots) > 0
+            having sum(delta_volume) > 0
             order by bar_ts
             """,
             [code, start.to_pydatetime(), source_end.to_pydatetime(), start.to_pydatetime(), end.to_pydatetime()],
@@ -553,10 +548,10 @@ class DuckDbMarketData:
             label_expr = """
                 case
                     when date_part('hour', ts) = 9 and date_part('minute', ts) = 25 then date_trunc('day', ts) + interval 9 hour + interval 30 minute
-                    when date_part('hour', ts) = 15 and date_part('minute', ts) = 0 then date_trunc('day', ts) + interval 15 hour
-                    when (date_part('hour', ts) = 9 and date_part('minute', ts) >= 30) or date_part('hour', ts) = 10 or (date_part('hour', ts) = 11 and date_part('minute', ts) < 30)
+                    when ts::time > time '14:57:00' and ts::time <= time '15:00:59' then date_trunc('day', ts) + interval 15 hour
+                    when (date_part('hour', ts) = 9 and date_part('minute', ts) >= 30) or date_part('hour', ts) = 10 or date_part('hour', ts) = 11
                         then date_trunc('minute', ts) + interval 1 minute
-                    when date_part('hour', ts) = 13 or (date_part('hour', ts) = 14 and date_part('minute', ts) < 58)
+                    when date_part('hour', ts) = 13 or (date_part('hour', ts) = 14 and date_part('minute', ts) < 57)
                         then date_trunc('minute', ts) + interval 1 minute
                     else null
                 end
@@ -584,19 +579,27 @@ class DuckDbMarketData:
                     code,
                     {label_expr} as bar_ts,
                     ts,
+                    trade_date,
                     source_row,
-                    last_price,
-                    volume_lots,
-                    amount_delta
-                from raw_tick_v3
+                    lastPrice,
+                    volume,
+                    amount
+                from qmt_tick_v1
                 where code in {_quote_list(codes)}
                   and ts >= ?
                   and ts <= ?
-                  and last_price > 0
+                  and lastPrice > 0
+            ),
+            with_delta as (
+                select
+                    *,
+                    greatest(volume - coalesce(lag(volume) over (partition by code, trade_date order by ts, source_row), 0), 0) as delta_volume,
+                    greatest(amount - coalesce(lag(amount) over (partition by code, trade_date order by ts, source_row), 0), 0) as delta_amount
+                from labeled
             ),
             filtered as (
                 select *
-                from labeled
+                from with_delta
                 where bar_ts is not null
                   and bar_ts >= ?
                   and bar_ts <= ?
@@ -605,15 +608,15 @@ class DuckDbMarketData:
                 code,
                 bar_ts as ts,
                 cast(strftime(bar_ts, '%Y%m%d%H%M%S') as bigint) as time,
-                first(last_price order by ts, source_row) as open,
-                max(last_price) as high,
-                min(last_price) as low,
-                last(last_price order by ts, source_row) as close,
-                sum(volume_lots) as volume,
-                sum(amount_delta) as amount
+                first(lastPrice order by ts, source_row) as open,
+                max(lastPrice) as high,
+                min(lastPrice) as low,
+                last(lastPrice order by ts, source_row) as close,
+                sum(delta_volume) as volume,
+                sum(delta_amount) as amount
             from filtered
             group by code, bar_ts
-            having sum(volume_lots) > 0
+            having sum(delta_volume) > 0
             order by code, bar_ts
             """,
             [start.to_pydatetime(), source_end.to_pydatetime(), start.to_pydatetime(), end.to_pydatetime()],
@@ -719,14 +722,14 @@ class DuckDbMarketData:
         return {
             "time": qmt_millis(ts),
             "ts": ts,
-            "lastPrice": float(r["last_price"]),
-            "volume": float(r.get("cum_volume", r.get("volume_lots", np.nan))),
-            "amount": float(r.get("cum_amount", r.get("amount_delta", np.nan))),
-            "open": float(r.get("open_price", r["last_price"])),
-            "askPrice": self._array5(r, "ask_price"),
-            "bidPrice": self._array5(r, "bid_price"),
-            "askVol": self._array5(r, "ask_vol"),
-            "bidVol": self._array5(r, "bid_vol"),
+            "lastPrice": float(r["lastPrice"]),
+            "volume": float(r.get("volume", np.nan)),
+            "amount": float(r.get("amount", np.nan)),
+            "open": float(r.get("open_price", r["lastPrice"])),
+            "askPrice": self._array5(r, "askPrice"),
+            "bidPrice": self._array5(r, "bidPrice"),
+            "askVol": self._array5(r, "askVol"),
+            "bidVol": self._array5(r, "bidVol"),
         }
 
     @staticmethod
@@ -741,15 +744,15 @@ class DuckDbMarketData:
         out = pd.DataFrame(
             {
                 "ts": pd.to_datetime(df["ts"]),
-                "lastPrice": pd.to_numeric(df["last_price"], errors="coerce"),
-                "volume": pd.to_numeric(df["cum_volume"] if "cum_volume" in df.columns else df["volume_lots"], errors="coerce"),
-                "amount": pd.to_numeric(df["cum_amount"] if "cum_amount" in df.columns else df["amount_delta"], errors="coerce"),
-                "open": pd.to_numeric(df["open_price"] if "open_price" in df.columns else df["last_price"], errors="coerce"),
+                "lastPrice": pd.to_numeric(df["lastPrice"], errors="coerce"),
+                "volume": pd.to_numeric(df["volume"], errors="coerce"),
+                "amount": pd.to_numeric(df["amount"], errors="coerce"),
+                "open": pd.to_numeric(df["open_price"] if "open_price" in df.columns else df["lastPrice"], errors="coerce"),
             }
         )
         out["time"] = out["ts"].map(qmt_millis)
-        out["askPrice"] = self._level_arrays(df, "ask_price")
-        out["bidPrice"] = self._level_arrays(df, "bid_price")
-        out["askVol"] = self._level_arrays(df, "ask_vol")
-        out["bidVol"] = self._level_arrays(df, "bid_vol")
+        out["askPrice"] = self._level_arrays(df, "askPrice")
+        out["bidPrice"] = self._level_arrays(df, "bidPrice")
+        out["askVol"] = self._level_arrays(df, "askVol")
+        out["bidVol"] = self._level_arrays(df, "bidVol")
         return out[["time", "ts", "lastPrice", "volume", "amount", "open", "askPrice", "bidPrice", "askVol", "bidVol"]]

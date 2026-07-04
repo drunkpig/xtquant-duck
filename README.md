@@ -58,6 +58,9 @@ Default database path is `C:\data-tick\duckdb\qmt_mock.duckdb`; override it with
 See [docs/MOCK_XTQUANT_API.md](docs/MOCK_XTQUANT_API.md) for supported APIs,
 parameters, return shapes, and strict unsupported behavior.
 
+The production DuckDB file uses QMT-canonical tables `qmt_tick_v1` and
+`qmt_daily_v1`; legacy `raw_*` tables are retained only as rebuild/audit inputs.
+
 ## Tests
 
 ```powershell

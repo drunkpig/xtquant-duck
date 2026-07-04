@@ -88,7 +88,7 @@ When `field_list` is provided, only those fields are returned. If the DataFrame 
 
 #### Period `tick`
 
-Source: `raw_tick_v3`.
+Source: `qmt_tick_v1`.
 
 Price domain: raw, never adjusted.
 
@@ -111,7 +111,7 @@ Fields:
 
 #### Period `1m` / `1min`
 
-Source: dynamic aggregation from `raw_tick_v3`.
+Source: dynamic aggregation from `qmt_tick_v1`.
 
 Raw bar rules:
 
@@ -153,7 +153,7 @@ Formula:
 
 #### Period `60m` / `60min` / `1h`
 
-Source: dynamic aggregation from `raw_tick_v3`, not from 1m bars.
+Source: dynamic aggregation from `qmt_tick_v1`, not from 1m bars.
 
 Raw bar boundaries:
 
@@ -168,7 +168,7 @@ The current strategy requests raw 60m bars.
 
 #### Period `1d` / `day` / `d`
 
-Source: `raw_daily_v1`.
+Source: `qmt_daily_v1`.
 
 Supported `dividend_type`:
 
