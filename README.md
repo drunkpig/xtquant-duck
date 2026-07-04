@@ -61,6 +61,20 @@ parameters, return shapes, and strict unsupported behavior.
 The production DuckDB file uses QMT-canonical tables `qmt_tick_v1` and
 `qmt_daily_v1`; legacy `raw_*` tables are retained only as rebuild/audit inputs.
 
+## Runtime Data Boundary
+
+Installed runtime APIs are only allowed to read canonical QMT-semantics tables:
+
+- `qmt_tick_v1`
+- `qmt_daily_v1`
+- `baostock_adjust_factor_events`
+- `choice_sse50_constituents_2022_2025`
+
+`raw_tick_v3` and `raw_daily_v1` are source-lineage tables for offline import,
+canonical rebuild, and validation scripts only. Strategy code and
+`xtquant_duck.xtdata` must not query them directly. Unit tests scan the runtime
+packages and fail if these raw table names appear there.
+
 ## Tests
 
 ```powershell

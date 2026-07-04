@@ -12,6 +12,22 @@ import xtquant_duck as xtquant
 
 The mock is intentionally strict. Unsupported semantics raise `NotImplementedError`; missing local data raises `FileNotFoundError`. It must not silently return placeholder market data.
 
+## Runtime Data Boundary
+
+The installed runtime API has a hard data-source boundary:
+
+| role | tables |
+| --- | --- |
+| Runtime market data | `qmt_tick_v1`, `qmt_daily_v1` |
+| Runtime adjustment data | `baostock_adjust_factor_events` |
+| Runtime universe data | `choice_sse50_constituents_2022_2025` |
+| Offline source lineage only | `raw_tick_v3`, `raw_daily_v1` |
+
+`xtquant_duck.xtdata` and `qmt_data_layer.duckdb_data.DuckDbMarketData` must not
+query raw source-lineage tables. Raw tables are only for import, canonical
+rebuild, audit, and validation scripts. A unit test scans the runtime package
+source and fails if raw table names are introduced into runtime code.
+
 ## Environment
 
 | variable | default | meaning |

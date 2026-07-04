@@ -11,6 +11,18 @@ import pandas as pd
 
 
 DEFAULT_DB_PATH = Path(r"C:\data-tick\duckdb\qmt_mock.duckdb")
+RUNTIME_REQUIRED_TABLES = frozenset(
+    {
+        "qmt_tick_v1",
+        "qmt_daily_v1",
+        "baostock_adjust_factor_events",
+    }
+)
+RUNTIME_OPTIONAL_TABLES = frozenset(
+    {
+        "choice_sse50_constituents_2022_2025",
+    }
+)
 
 
 def normalize_qmt_code(code: str) -> str:
@@ -122,6 +134,7 @@ class DuckDbMarketData:
     def __init__(self, db_path: str | Path | None = None):
         self.db_path = Path(db_path or os.environ.get("QMT_MOCK_DUCKDB", DEFAULT_DB_PATH))
         self.con = duckdb.connect(str(self.db_path), read_only=True)
+        self._require_tables(RUNTIME_REQUIRED_TABLES)
 
     def close(self) -> None:
         self.con.close()
@@ -131,6 +144,28 @@ class DuckDbMarketData:
 
     def __exit__(self, *_: Any) -> None:
         self.close()
+
+    def _require_tables(self, table_names: Iterable[str]) -> None:
+        names = sorted(set(table_names))
+        if not names:
+            return
+        placeholders = ",".join("?" for _ in names)
+        rows = self.con.execute(
+            f"""
+            select table_name
+            from information_schema.tables
+            where table_schema = 'main'
+              and table_name in ({placeholders})
+            """,
+            names,
+        ).fetchall()
+        found = {str(row[0]) for row in rows}
+        missing = [name for name in names if name not in found]
+        if missing:
+            raise RuntimeError(
+                f"DuckDB market-data runtime requires canonical table(s) {missing}; "
+                f"rebuild the database before using xtquant_duck. db_path={self.db_path}"
+            )
 
     def has_history_data(self, code: str, period: str, start: pd.Timestamp, end: pd.Timestamp) -> bool:
         code = normalize_qmt_code(code)
@@ -441,6 +476,7 @@ class DuckDbMarketData:
         return df if not df.empty else _empty_adjusted_bar()
 
     def sse50_members(self, snapshot_year: int) -> pd.DataFrame:
+        self._require_tables(RUNTIME_OPTIONAL_TABLES)
         return self.con.execute(
             """
             select *
