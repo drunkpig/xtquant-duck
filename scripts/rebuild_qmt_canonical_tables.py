@@ -85,6 +85,7 @@ def source_filter(start: str, end: str, source_like: str) -> str:
     return f"""
         trade_date between date '{start}' and date '{end}'
         and source_file like '{source_like.replace("'", "''")}'
+        and ts::time <= time '15:00:59'
     """
 
 
