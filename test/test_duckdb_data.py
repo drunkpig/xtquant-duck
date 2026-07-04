@@ -8,6 +8,11 @@ import duckdb
 import pandas as pd
 
 from qmt_data_layer.duckdb_data import DuckDbMarketData, normalize_qmt_code, parse_qmt_time
+from scripts.rebuild_qmt_canonical_tables import (
+    create_tables,
+    insert_daily_from_qmt_tick_all_sources,
+    insert_ticks_from_raw_sources,
+)
 
 
 def build_test_db(path: Path) -> None:
@@ -246,6 +251,93 @@ class DuckDbMarketDataTests(unittest.TestCase):
         self.assertTrue(self.data.has_history_data("600000.SH", "1d", pd.Timestamp("2022-01-01"), pd.Timestamp("2022-07-20")))
         self.assertTrue(self.data.has_history_data("600000.SH", "tick", pd.Timestamp("2022-07-20 09:20:00"), pd.Timestamp("2022-07-20 09:26:00")))
         self.assertFalse(self.data.has_history_data("600000.SH", "1d", pd.Timestamp("1990-01-01"), pd.Timestamp("1990-01-02")))
+
+
+class CanonicalRebuildTests(unittest.TestCase):
+    def test_raw_source_rebuild_converts_share_ticks_to_lots_and_keeps_lot_ticks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "rebuild_test.duckdb"
+            con = duckdb.connect(str(db_path))
+            try:
+                con.execute(
+                    """
+                    create table raw_tick_v3 (
+                        ts timestamp,
+                        trade_date date,
+                        code varchar,
+                        local_code varchar,
+                        exchange varchar,
+                        last_price double,
+                        trade_count bigint,
+                        amount_delta double,
+                        volume_lots double,
+                        volume_shares double,
+                        side varchar,
+                        bid_price1 double,
+                        bid_price2 double,
+                        bid_price3 double,
+                        bid_price4 double,
+                        bid_price5 double,
+                        ask_price1 double,
+                        ask_price2 double,
+                        ask_price3 double,
+                        ask_price4 double,
+                        ask_price5 double,
+                        bid_vol1 double,
+                        bid_vol2 double,
+                        bid_vol3 double,
+                        bid_vol4 double,
+                        bid_vol5 double,
+                        ask_vol1 double,
+                        ask_vol2 double,
+                        ask_vol3 double,
+                        ask_vol4 double,
+                        ask_vol5 double,
+                        source_file varchar,
+                        source_row bigint
+                    )
+                    """
+                )
+                rows = [
+                    ("2025-12-01 09:25:00", "600000.SH", "sh600000", 10.0, 100.0, 100000.0, "lot_source", 1),
+                    ("2025-12-01 09:30:00", "600000.SH", "sh600000", 10.0, 50.0, 50000.0, "lot_source", 2),
+                    ("2025-12-01 09:25:00", "688000.SH", "sh688000", 100.0, 10000.0, 1000000.0, "share_source", 1),
+                    ("2025-12-01 09:30:00", "688000.SH", "sh688000", 100.0, 5000.0, 500000.0, "share_source", 2),
+                ]
+                for ts, code, local, price, volume, amount, source, source_row in rows:
+                    con.execute(
+                        """
+                        insert into raw_tick_v3 values (
+                            ?, date '2025-12-01', ?, ?, 'SH', ?, 0, ?, ?, ? * 100, null,
+                            9, 8, 7, 6, 5, 11, 12, 13, 14, 15,
+                            1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                            ?, ?
+                        )
+                        """,
+                        [ts, code, local, price, amount, volume, volume, source, source_row],
+                    )
+                create_tables(con, rebuild=True)
+                insert_ticks_from_raw_sources(con, "2025-12-01", "2025-12-01", "unit")
+                insert_daily_from_qmt_tick_all_sources(con, "2025-12-01", "2025-12-01", "unit")
+
+                tick = con.execute(
+                    """
+                    select code, max(volume) as volume, max(amount) as amount
+                    from qmt_tick_v1
+                    group by code
+                    order by code
+                    """
+                ).fetchdf()
+                got = {r.code: (float(r.volume), float(r.amount)) for r in tick.itertuples(index=False)}
+                self.assertEqual(got["600000.SH"], (150.0, 150000.0))
+                self.assertEqual(got["688000.SH"], (150.0, 1500000.0))
+
+                daily = con.execute("select code, volume from qmt_daily_v1 order by code").fetchdf()
+                daily_got = {r.code: float(r.volume) for r in daily.itertuples(index=False)}
+                self.assertEqual(daily_got["600000.SH"], 150.0)
+                self.assertEqual(daily_got["688000.SH"], 150.0)
+            finally:
+                con.close()
 
 
 if __name__ == "__main__":
