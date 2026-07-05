@@ -9,9 +9,14 @@ import pandas as pd
 
 from qmt_data_layer.duckdb_data import DuckDbMarketData, normalize_qmt_code, parse_qmt_time
 from scripts.rebuild_qmt_canonical_tables import (
+    A50_TICK_SOURCE_LIKE,
+    OLD_DAILY_SOURCE_LIKE,
+    OLD_TICK_SOURCE_LIKE,
     create_tables,
-    insert_daily_from_qmt_tick_all_sources,
-    insert_ticks_from_raw_sources,
+    insert_daily_from_raw_daily_old,
+    insert_daily_from_qmt_tick,
+    insert_missing_daily_from_qmt_tick_old,
+    insert_ticks_from_old,
 )
 
 
@@ -254,7 +259,7 @@ class DuckDbMarketDataTests(unittest.TestCase):
 
 
 class CanonicalRebuildTests(unittest.TestCase):
-    def test_raw_source_rebuild_converts_share_ticks_to_lots_and_keeps_lot_ticks(self) -> None:
+    def test_raw_source_rebuild_uses_qmt_lot_semantics_by_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "rebuild_test.duckdb"
             con = duckdb.connect(str(db_path))
@@ -298,27 +303,76 @@ class CanonicalRebuildTests(unittest.TestCase):
                     )
                     """
                 )
+                con.execute(
+                    """
+                    create table raw_daily_v1 (
+                        date date,
+                        code varchar,
+                        local_code varchar,
+                        open double,
+                        high double,
+                        low double,
+                        close double,
+                        volume double,
+                        volume_lots double,
+                        volume_shares double,
+                        amount double,
+                        minute_count integer,
+                        source_file varchar
+                    )
+                    """
+                )
                 rows = [
-                    ("2025-12-01 09:25:00", "600000.SH", "sh600000", 10.0, 100.0, 100000.0, "lot_source", 1),
-                    ("2025-12-01 09:30:00", "600000.SH", "sh600000", 10.0, 50.0, 50000.0, "lot_source", 2),
-                    ("2025-12-01 09:25:00", "688000.SH", "sh688000", 100.0, 10000.0, 1000000.0, "share_source", 1),
-                    ("2025-12-01 09:30:00", "688000.SH", "sh688000", 100.0, 5000.0, 500000.0, "share_source", 2),
+                    ("2025-12-01 09:25:00", "2025-12-01", "600000.SH", "sh600000", 10.0, 100.0, 100000.0, r"D:\ticks\data-tick\sh_v3\sh_600000.gz.parquet", 1),
+                    ("2025-12-01 09:30:00", "2025-12-01", "600000.SH", "sh600000", 10.0, 50.0, 50000.0, r"D:\ticks\data-tick\sh_v3\sh_600000.gz.parquet", 2),
+                    ("2025-12-01 09:25:00", "2025-12-01", "688000.SH", "sh688000", 100.0, 10000.0, 1000000.0, r"D:\ticks\data-tick\sh_v3\sh_688000.gz.parquet", 1),
+                    ("2025-12-01 09:30:00", "2025-12-01", "688000.SH", "sh688000", 100.0, 5000.0, 500000.0, r"D:\ticks\data-tick\sh_v3\sh_688000.gz.parquet", 2),
+                    ("2026-01-05 09:25:00", "2026-01-05", "688001.SH", "sh688001", 200.0, 100.0, 2000000.0, r"D:\百度盘分钟K10年\A50-2026\sh_688001.parquet", 1),
+                    ("2026-01-05 09:30:00", "2026-01-05", "688001.SH", "sh688001", 200.0, 50.0, 1000000.0, r"D:\百度盘分钟K10年\A50-2026\sh_688001.parquet", 2),
                 ]
-                for ts, code, local, price, volume, amount, source, source_row in rows:
+                for ts, trade_date, code, local, price, volume, amount, source, source_row in rows:
                     con.execute(
                         """
                         insert into raw_tick_v3 values (
-                            ?, date '2025-12-01', ?, ?, 'SH', ?, 0, ?, ?, ? * 100, null,
+                            ?, ?, ?, ?, 'SH', ?, 0, ?, ?, ? * 100, null,
                             9, 8, 7, 6, 5, 11, 12, 13, 14, 15,
                             1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
                             ?, ?
                         )
                         """,
-                        [ts, code, local, price, amount, volume, volume, source, source_row],
+                        [ts, trade_date, code, local, price, amount, volume, volume, source, source_row],
+                    )
+                raw_daily_rows = [
+                    ("2025-12-01", "600000.SH", "sh600000", 10.0, 10.5, 9.8, 10.0, 15000.0, 150.0, 15000.0, 150000.0),
+                    ("2025-12-01", "688000.SH", "sh688000", 100.0, 101.0, 99.0, 100.0, 15000.0, 15000.0, 15000.0, 1500000.0),
+                ]
+                for row in raw_daily_rows:
+                    con.execute(
+                        """
+                        insert into raw_daily_v1 values (
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, 'C:\\data-tick\\sse50-day-raw-v3-vendoropen-2021-2025\\unit.parquet'
+                        )
+                        """,
+                        row,
                     )
                 create_tables(con, rebuild=True)
-                insert_ticks_from_raw_sources(con, "2025-12-01", "2025-12-01", "unit")
-                insert_daily_from_qmt_tick_all_sources(con, "2025-12-01", "2025-12-01", "unit")
+                insert_ticks_from_old(con, "2025-12-01", "2025-12-01", OLD_TICK_SOURCE_LIKE, "unit_old_tick")
+                insert_ticks_from_old(con, "2026-01-05", "2026-01-05", A50_TICK_SOURCE_LIKE, "unit_a50_tick")
+                insert_daily_from_raw_daily_old(
+                    con,
+                    "2025-12-01",
+                    "2025-12-01",
+                    OLD_DAILY_SOURCE_LIKE,
+                    "unit_vendor_daily",
+                )
+                insert_missing_daily_from_qmt_tick_old(
+                    con,
+                    "2025-12-01",
+                    "2025-12-01",
+                    OLD_TICK_SOURCE_LIKE,
+                    "unit_old_tick_backfill",
+                )
+                insert_daily_from_qmt_tick(con, "2026-01-05", "2026-01-05", A50_TICK_SOURCE_LIKE, "unit_a50")
 
                 tick = con.execute(
                     """
@@ -331,11 +385,13 @@ class CanonicalRebuildTests(unittest.TestCase):
                 got = {r.code: (float(r.volume), float(r.amount)) for r in tick.itertuples(index=False)}
                 self.assertEqual(got["600000.SH"], (150.0, 150000.0))
                 self.assertEqual(got["688000.SH"], (150.0, 1500000.0))
+                self.assertEqual(got["688001.SH"], (150.0, 3000000.0))
 
-                daily = con.execute("select code, volume from qmt_daily_v1 order by code").fetchdf()
+                daily = con.execute("select code, volume, source_file from qmt_daily_v1 order by code").fetchdf()
                 daily_got = {r.code: float(r.volume) for r in daily.itertuples(index=False)}
                 self.assertEqual(daily_got["600000.SH"], 150.0)
                 self.assertEqual(daily_got["688000.SH"], 150.0)
+                self.assertEqual(daily_got["688001.SH"], 150.0)
             finally:
                 con.close()
 

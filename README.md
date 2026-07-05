@@ -75,6 +75,25 @@ canonical rebuild, and validation scripts only. Strategy code and
 `xtquant_duck.xtdata` must not query them directly. Unit tests scan the runtime
 packages and fail if these raw table names appear there.
 
+## Canonical Rebuild
+
+Canonical tables are rebuilt with fixed source boundaries:
+
+- 2022-2025 tick: `D:\ticks\data-tick\sh_v3` and `D:\ticks\data-tick\sz_v3`.
+- 2026 tick: `D:\百度盘分钟K10年\A50-2026`.
+- 2022-2025 daily: vendor raw daily first, then missing code-days backfilled
+  from corrected sh/sz tick.
+- 2026 daily: derived from A50 tick.
+
+QMT volume semantics are lots. During rebuild, sh/sz v3 `688*` tick and vendor
+daily rows are converted from shares to lots by dividing by `100`; sh/sz non-688
+and A50 rows are already lots. A50 startup rows are not allowed into canonical
+2022-2025 data.
+
+```powershell
+uv run python scripts\rebuild_qmt_canonical_tables.py --db C:\data-tick\duckdb\qmt_mock.duckdb --rebuild --skip-indexes
+```
+
 ## Tests
 
 ```powershell

@@ -15,6 +15,11 @@ if str(ROOT) not in sys.path:
 from qmt_data_layer.duckdb_data import DEFAULT_DB_PATH
 
 
+OLD_TICK_SOURCE_LIKE = r"D:\ticks\data-tick\%"
+A50_TICK_SOURCE_LIKE = r"D:\百度盘分钟K10年\A50-2026\%"
+OLD_DAILY_SOURCE_LIKE = r"C:\data-tick\sse50-day-raw-v3-vendoropen-2021-2025\%"
+
+
 def connect(db_path: Path) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(str(db_path))
     con.execute("pragma threads=2")
@@ -89,27 +94,46 @@ def source_filter(start: str, end: str, source_like: str) -> str:
     """
 
 
+def qmt_volume_lots_expr() -> str:
+    return """
+        case
+            when source_file like 'D:\\ticks\\data-tick\\%' and code like '688%' then volume_lots / 100.0
+            else volume_lots
+        end
+    """
+
+
 def insert_ticks_from_old(con: duckdb.DuckDBPyConnection, start: str, end: str, source_like: str, source_name: str) -> None:
     print(f"building qmt_tick_v1 from {source_name}: {start}..{end}", flush=True)
     where_sql = source_filter(start, end, source_like)
+    qmt_volume_lots = qmt_volume_lots_expr()
     con.execute(
         f"""
         insert into qmt_tick_v1
-        with source as (
+        with source_raw as (
+            select
+                *
+            from raw_tick_v3
+            where {where_sql}
+              and last_price > 0
+              and volume_lots > 0
+        ),
+        source as (
+            select
+                *,
+                {qmt_volume_lots} as delta_volume_lots
+            from source_raw
+        ),
+        normalized as (
             select
                 *,
                 case
                     when amount_delta > 0
-                         and last_price > 0
-                         and volume_lots > 0
-                         and amount_delta / nullif(volume_lots * last_price, 0) between 0.2 and 10
-                        then volume_lots / 100.0
-                    else volume_lots
-                end as delta_volume_lots,
-                amount_delta as delta_amount
-            from raw_tick_v3
-            where {where_sql}
-              and last_price > 0
+                         and amount_delta / nullif(delta_volume_lots * last_price * 100.0, 0) between 0.2 and 5.0
+                        then amount_delta
+                    else delta_volume_lots * last_price * 100.0
+                end as delta_amount
+            from source
         ),
         cumulative as (
             select
@@ -151,7 +175,7 @@ def insert_ticks_from_old(con: duckdb.DuckDBPyConnection, start: str, end: str, 
                 ask_vol5,
                 source_file,
                 source_row
-            from source
+            from normalized
         )
         select
             ts,
@@ -189,112 +213,93 @@ def insert_ticks_from_old(con: duckdb.DuckDBPyConnection, start: str, end: str, 
     )
 
 
-def insert_ticks_from_raw_sources(con: duckdb.DuckDBPyConnection, start: str, end: str, source_name: str) -> None:
-    print(f"building qmt_tick_v1 from raw_tick_v3 all sources: {start}..{end}", flush=True)
+def insert_daily_from_raw_daily_old(con: duckdb.DuckDBPyConnection, start: str, end: str, source_like: str, source_name: str) -> None:
+    print(f"building qmt_daily_v1 from raw_daily_v1 {source_name}: {start}..{end}", flush=True)
     con.execute(
         """
-        insert into qmt_tick_v1
+        insert into qmt_daily_v1
         with source as (
             select
-                *,
-                case
-                    when amount_delta > 0
-                         and last_price > 0
-                         and volume_lots > 0
-                         and amount_delta / nullif(volume_lots * last_price, 0) between 0.2 and 10
-                        then volume_lots / 100.0
-                    else volume_lots
-                end as delta_volume_lots,
-                amount_delta as delta_amount
-            from raw_tick_v3
-            where trade_date between cast(? as date) and cast(? as date)
-              and ts::time <= time '15:00:59'
-              and last_price > 0
-        ),
-        dedup_source as (
-            select *
-            from source
-            qualify row_number() over (
-                partition by code, trade_date, ts, source_row
-                order by case when source_file like 'D:\\ticks\\data-tick\\%' then 0 else 1 end, source_file
-            ) = 1
-        ),
-        cumulative as (
-            select
-                ts,
-                trade_date,
+                date,
                 code,
                 local_code,
-                exchange,
-                last_price,
-                sum(greatest(delta_volume_lots, 0)) over (
-                    partition by code, trade_date
-                    order by ts, source_row
-                    rows between unbounded preceding and current row
-                ) as cum_volume,
-                sum(greatest(delta_amount, 0)) over (
-                    partition by code, trade_date
-                    order by ts, source_row
-                    rows between unbounded preceding and current row
-                ) as cum_amount,
-                bid_price1,
-                bid_price2,
-                bid_price3,
-                bid_price4,
-                bid_price5,
-                ask_price1,
-                ask_price2,
-                ask_price3,
-                ask_price4,
-                ask_price5,
-                bid_vol1,
-                bid_vol2,
-                bid_vol3,
-                bid_vol4,
-                bid_vol5,
-                ask_vol1,
-                ask_vol2,
-                ask_vol3,
-                ask_vol4,
-                ask_vol5,
-                source_file,
-                source_row
-            from dedup_source
+                open,
+                high,
+                low,
+                close,
+                case when code like '688%' then volume_lots / 100.0 else volume_lots end as qmt_volume_lots,
+                amount
+            from raw_daily_v1
+            where date between cast(? as date) and cast(? as date)
+              and source_file like ?
+              and close > 0
+              and volume_lots > 0
         )
         select
-            ts,
-            trade_date,
+            date,
             code,
-            local_code,
-            exchange,
-            last_price as lastPrice,
-            cum_volume as volume,
-            cum_amount as amount,
-            bid_price1 as bidPrice1,
-            bid_price2 as bidPrice2,
-            bid_price3 as bidPrice3,
-            bid_price4 as bidPrice4,
-            bid_price5 as bidPrice5,
-            ask_price1 as askPrice1,
-            ask_price2 as askPrice2,
-            ask_price3 as askPrice3,
-            ask_price4 as askPrice4,
-            ask_price5 as askPrice5,
-            bid_vol1 as bidVol1,
-            bid_vol2 as bidVol2,
-            bid_vol3 as bidVol3,
-            bid_vol4 as bidVol4,
-            bid_vol5 as bidVol5,
-            ask_vol1 as askVol1,
-            ask_vol2 as askVol2,
-            ask_vol3 as askVol3,
-            ask_vol4 as askVol4,
-            ask_vol5 as askVol5,
-            source_file,
-            source_row
-        from cumulative
+            any_value(local_code) as local_code,
+            any_value(open) as open,
+            any_value(high) as high,
+            any_value(low) as low,
+            any_value(close) as close,
+            any_value(qmt_volume_lots) as volume,
+            any_value(case when amount > 0 then amount else close * qmt_volume_lots * 100.0 end) as amount,
+            ? as source_file
+        from source
+        group by date, code
+        having any_value(qmt_volume_lots) > 0
         """,
-        [start, end],
+        [start, end, source_like, f"raw_daily_v1:{source_name}"],
+    )
+
+
+def insert_missing_daily_from_qmt_tick_old(
+    con: duckdb.DuckDBPyConnection,
+    start: str,
+    end: str,
+    source_like: str,
+    source_name: str,
+) -> None:
+    print(f"backfilling missing qmt_daily_v1 from qmt_tick_v1 {source_name}: {start}..{end}", flush=True)
+    con.execute(
+        """
+        insert into qmt_daily_v1
+        with tick_daily as (
+            select
+                trade_date as date,
+                code,
+                any_value(local_code) as local_code,
+                first(lastPrice order by ts, source_row) as open,
+                max(lastPrice) as high,
+                min(lastPrice) as low,
+                last(lastPrice order by ts, source_row) as close,
+                max(volume) as volume,
+                max(amount) as amount
+            from qmt_tick_v1
+            where trade_date between cast(? as date) and cast(? as date)
+              and source_file like ?
+              and lastPrice > 0
+            group by trade_date, code
+            having max(volume) > 0
+        )
+        select
+            t.date,
+            t.code,
+            t.local_code,
+            t.open,
+            t.high,
+            t.low,
+            t.close,
+            t.volume,
+            t.amount,
+            ? as source_file
+        from tick_daily t
+        left join qmt_daily_v1 d
+          on t.code = d.code and t.date = d.date
+        where d.code is null
+        """,
+        [start, end, source_like, f"derived_from_qmt_tick_v1:{source_name}:missing_vendor_daily"],
     )
 
 
@@ -322,32 +327,6 @@ def insert_daily_from_qmt_tick(con: duckdb.DuckDBPyConnection, start: str, end: 
         having max(volume) > 0
         """,
         [f"derived_from_qmt_tick_v1:{source_name}", start, end, source_like],
-    )
-
-
-def insert_daily_from_qmt_tick_all_sources(con: duckdb.DuckDBPyConnection, start: str, end: str, source_name: str) -> None:
-    print(f"building qmt_daily_v1 from qmt_tick_v1 all sources {source_name}: {start}..{end}", flush=True)
-    con.execute(
-        """
-        insert into qmt_daily_v1
-        select
-            trade_date as date,
-            code,
-            any_value(local_code) as local_code,
-            first(lastPrice order by ts, source_row) as open,
-            max(lastPrice) as high,
-            min(lastPrice) as low,
-            last(lastPrice order by ts, source_row) as close,
-            max(volume) as volume,
-            max(amount) as amount,
-            ? as source_file
-        from qmt_tick_v1
-        where trade_date between cast(? as date) and cast(? as date)
-          and lastPrice > 0
-        group by trade_date, code
-        having max(volume) > 0
-        """,
-        [f"derived_from_qmt_tick_v1:{source_name}", start, end],
     )
 
 
@@ -416,26 +395,16 @@ def main() -> int:
     parser.add_argument("--old-end", default="2025-12-31")
     parser.add_argument("--a50-start", default="2026-01-01")
     parser.add_argument("--a50-end", default="2026-12-31")
-    parser.add_argument(
-        "--use-raw-sources",
-        action="store_true",
-        help="Build canonical tables from every current raw_tick_v3 source in the requested date range.",
-    )
     args = parser.parse_args()
 
     with connect(args.db) as con:
         create_tables(con, args.rebuild)
         if args.rebuild:
-            if args.use_raw_sources:
-                insert_ticks_from_raw_sources(con, args.old_start, args.old_end, "raw_tick_v3_all_sources_old")
-                insert_ticks_from_raw_sources(con, args.a50_start, args.a50_end, "raw_tick_v3_all_sources_a50")
-                insert_daily_from_qmt_tick_all_sources(con, args.old_start, args.old_end, "raw_tick_v3_all_sources_old")
-                insert_daily_from_qmt_tick_all_sources(con, args.a50_start, args.a50_end, "raw_tick_v3_all_sources_a50")
-            else:
-                insert_ticks_from_old(con, args.old_start, args.old_end, r"D:\ticks\data-tick\%", "sh_sz_v3")
-                insert_ticks_from_old(con, args.a50_start, args.a50_end, r"D:\百度盘分钟K10年\A50-2026\%", "a50_2026")
-                insert_daily_from_qmt_tick(con, args.old_start, args.old_end, r"D:\ticks\data-tick\%", "sh_sz_v3")
-                insert_daily_from_qmt_tick(con, args.a50_start, args.a50_end, r"D:\百度盘分钟K10年\A50-2026\%", "a50_2026")
+            insert_ticks_from_old(con, args.old_start, args.old_end, OLD_TICK_SOURCE_LIKE, "sh_sz_v3")
+            insert_ticks_from_old(con, args.a50_start, args.a50_end, A50_TICK_SOURCE_LIKE, "a50_2026")
+            insert_daily_from_raw_daily_old(con, args.old_start, args.old_end, OLD_DAILY_SOURCE_LIKE, "sh_sz_v3_vendor_daily")
+            insert_missing_daily_from_qmt_tick_old(con, args.old_start, args.old_end, OLD_TICK_SOURCE_LIKE, "sh_sz_v3")
+            insert_daily_from_qmt_tick(con, args.a50_start, args.a50_end, A50_TICK_SOURCE_LIKE, "a50_2026")
         if not args.skip_indexes:
             create_indexes(con)
         summary = summarize(con)
